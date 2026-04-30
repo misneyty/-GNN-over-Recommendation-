@@ -21,4 +21,17 @@ To adhere to the fairness rules of the assignment:
 2. The model is trained exclusively on the provided shuffled dataset.
 
 ## Setup & Execution
-*(Add your specific installation instructions here once your environment is finalized, e.g., `pip install -r requirements.txt`)*
+### Install
+```
+pip install -r requirements.txt
+```
+
+### Train and Predict
+```
+python main.py --data-dir data --model mf --epochs 10 --out predictions.csv
+python main.py --data-dir data --model lightgcn --epochs 10 --out predictions.csv
+```
+
+### Notes
+- Place dataset files in the `data/` folder.
+- `predictions.csv` contains a score per test pair in the same order as `bipartite_test_ann.txt`.
