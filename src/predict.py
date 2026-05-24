@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import numpy as np
@@ -7,17 +5,16 @@ import pandas as pd
 import torch
 
 from .graph import build_bipartite_adjacency
-from .models import LightGCN, MatrixFactorization
 from .utils import ensure_dir
-
+from typing import Dict, Optional, Union
 
 def score_edges(
     model_name: str,
     model: torch.nn.Module,
     edges: np.ndarray,
     num_authors: int,
-    adj: torch.Tensor | None = None,
-    device: torch.device | None = None,
+    adj: Optional[Union[torch.Tensor, Dict[str, torch.Tensor]]],
+    device: Optional[torch.device],
     batch_size: int = 131072,
 ) -> np.ndarray:
     device = device or torch.device("cpu")
@@ -29,6 +26,11 @@ def score_edges(
             if adj is None:
                 raise ValueError("LightGCN prediction requires adj")
             z = model.encode(adj.to(device))
+        elif model_name == "hetero_lightgcn":
+            if adj is None:
+                raise ValueError("HeteroLightGCN prediction requires relation adjacencies")
+            adj = {name: value.to(device) for name, value in adj.items()}
+            author_z, paper_z = model.encode(adj)
 
         for start in range(0, len(edges), batch_size):
             batch = edges[start : start + batch_size]
@@ -38,6 +40,8 @@ def score_edges(
                 logits = model(author_ids, paper_ids)
             elif model_name == "lightgcn":
                 logits = model.score(z, author_ids, paper_ids)
+            elif model_name == "hetero_lightgcn":
+                logits = model.score(author_z, paper_z, author_ids, paper_ids)
             else:
                 raise ValueError(f"Unsupported model: {model_name}")
             scores.append(torch.sigmoid(logits).detach().cpu().numpy())
@@ -46,7 +50,7 @@ def score_edges(
 
 def write_submission(
     scores: np.ndarray,
-    output_path: str | Path,
+    output_path: Union[str, Path],
     threshold: float,
 ) -> Path:
     output_path = Path(output_path)

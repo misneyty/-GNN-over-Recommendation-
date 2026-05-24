@@ -1,5 +1,6 @@
 seed: 0
 model: lightgcn
+# options: mf, lightgcn, hetero_lightgcn
 data_dir: data_file
 epochs: 20
 dim: 64
