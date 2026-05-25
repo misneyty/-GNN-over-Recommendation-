@@ -34,12 +34,12 @@ Data files are ignored by Git to avoid committing large course data.
 
 ## Main Pipeline
 
-The current implementation contains a complete baseline pipeline:
+The current implementation contains a complete recommendation pipeline:
 
 1. Load author-paper, author-author, and paper-paper edges.
 2. Split observed author-paper edges into train and validation sets.
 3. Sample negative author-paper pairs.
-4. Train Matrix Factorization or LightGCN.
+4. Train LightGCN or HeteroGNN.
 5. Search the best validation threshold for F1-score.
 6. Predict `bipartite_test_ann.txt` and export a Kaggle-ready submission.
 
@@ -63,16 +63,16 @@ outputs/submissions/Submission.csv
 
 ## Useful Commands
 
-Train Matrix Factorization:
-
-```powershell
-python main.py --data-dir data_file --model mf --epochs 20
-```
-
 Train LightGCN:
 
 ```powershell
 python main.py --data-dir data_file --model lightgcn --epochs 20 --dim 64 --layers 2
+```
+
+Train HeteroGNN:
+
+```powershell
+python main.py --data-dir data_file --model heterognn --epochs 50 --dim 64 --layers 2
 ```
 
 ## Compliance

@@ -26,9 +26,9 @@ def score_edges(
             if adj is None:
                 raise ValueError("LightGCN prediction requires adj")
             z = model.encode(adj.to(device))
-        elif model_name == "hetero_lightgcn":
+        elif model_name == "heterognn":
             if adj is None:
-                raise ValueError("HeteroLightGCN prediction requires relation adjacencies")
+                raise ValueError("Heterogeneous graph model prediction requires relation adjacencies")
             adj = {name: value.to(device) for name, value in adj.items()}
             author_z, paper_z = model.encode(adj)
 
@@ -36,11 +36,9 @@ def score_edges(
             batch = edges[start : start + batch_size]
             author_ids = torch.as_tensor(batch[:, 0], dtype=torch.long, device=device)
             paper_ids = torch.as_tensor(batch[:, 1], dtype=torch.long, device=device)
-            if model_name == "mf":
-                logits = model(author_ids, paper_ids)
-            elif model_name == "lightgcn":
+            if model_name == "lightgcn":
                 logits = model.score(z, author_ids, paper_ids)
-            elif model_name == "hetero_lightgcn":
+            elif model_name == "heterognn":
                 logits = model.score(author_z, paper_z, author_ids, paper_ids)
             else:
                 raise ValueError(f"Unsupported model: {model_name}")
