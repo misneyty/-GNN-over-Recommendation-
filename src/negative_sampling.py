@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import torch
 
 
 def build_positive_set(edges: np.ndarray) -> set[tuple[int, int]]:
@@ -30,3 +31,28 @@ def sample_negative_edges(
                     break
 
     return np.asarray(samples, dtype=np.int64)
+
+
+class BPRDataset(torch.utils.data.Dataset):
+    def __init__(self, pos_edges: np.ndarray, num_papers: int):
+        super().__init__()
+        self.pos_edges = pos_edges
+        self.num_papers = num_papers
+        self.num_edges = len(pos_edges)
+        
+    def __len__(self) -> int:
+        return self.num_edges
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        author = self.pos_edges[idx, 0]
+        pos_paper = self.pos_edges[idx, 1]
+        
+        # Approximate dynamic negative sampling (uniform sampling).
+        # We assume sparsity is high enough that random items are mostly negative.
+        neg_paper = np.random.randint(0, self.num_papers)
+        
+        return (
+            torch.as_tensor(author, dtype=torch.long),
+            torch.as_tensor(pos_paper, dtype=torch.long),
+            torch.as_tensor(neg_paper, dtype=torch.long)
+        )
