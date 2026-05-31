@@ -16,7 +16,7 @@ def score_edges(
     model: torch.nn.Module,
     edges: np.ndarray,
     num_authors: int,
-    adj: torch.Tensor | None = None,
+    adj: torch.Tensor | dict[str, torch.Tensor] | None = None,
     device: torch.device | None = None,
     batch_size: int = 131072,
 ) -> np.ndarray:
@@ -29,6 +29,14 @@ def score_edges(
             if adj is None:
                 raise ValueError("LightGCN prediction requires adj")
             z = model.encode(adj.to(device))
+        elif model_name == "hetero_lightgcn":
+            if not isinstance(adj, dict):
+                raise ValueError("HeteroLightGCN prediction requires adjs dict")
+            z = model.encode(
+                adj["author_paper"].to(device),
+                adj["author_author"].to(device),
+                adj["paper_paper"].to(device),
+            )
 
         for start in range(0, len(edges), batch_size):
             batch = edges[start : start + batch_size]
@@ -36,7 +44,7 @@ def score_edges(
             paper_ids = torch.as_tensor(batch[:, 1], dtype=torch.long, device=device)
             if model_name == "mf":
                 logits = model(author_ids, paper_ids)
-            elif model_name == "lightgcn":
+            elif model_name in ("lightgcn", "hetero_lightgcn"):
                 logits = model.score(z, author_ids, paper_ids)
             else:
                 raise ValueError(f"Unsupported model: {model_name}")
