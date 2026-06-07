@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Optional
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 
@@ -6,7 +7,7 @@ def classification_metrics(
     y_true: np.ndarray,
     y_score: np.ndarray,
     threshold: float,
-    auc: float | None = None,
+    auc: Optional[float] = None,
 ) -> dict[str, float]:
     y_pred = (y_score >= threshold).astype(np.int64)
     metrics = {
