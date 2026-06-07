@@ -1,13 +1,8 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-
 from .data import Dataset
 from .evaluate import search_best_threshold
 from .graph import build_bipartite_adjacency
@@ -15,20 +10,26 @@ from .models import LightGCN, MatrixFactorization
 from .negative_sampling import sample_negative_edges
 from .predict import score_edges
 from .split import train_valid_split
+from typing import Optional
 
-
-@dataclass
 class TrainResult:
-    model: torch.nn.Module
-    adj: torch.Tensor | None
-    best_threshold: float
-    valid_metrics: dict[str, float]
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        adj: Optional[torch.Tensor],
+        best_threshold: float,
+        valid_metrics: dict[str, float],
+    ):
+        self.model = model
+        self.adj = adj
+        self.best_threshold = best_threshold
+        self.valid_metrics = valid_metrics#验证集指标
 
-
+#将正负样本边合并
 def make_edge_loader(
-    pos_edges: np.ndarray,
-    neg_edges: np.ndarray,
-    batch_size: int,
+    pos_edges: np.ndarray,#正样本边（label=1）
+    neg_edges: np.ndarray,#负样本边（label=0）
+    batch_size: int,#批量大小
 ) -> DataLoader:
     edges = np.vstack([pos_edges, neg_edges])
     labels = np.concatenate([
@@ -38,6 +39,7 @@ def make_edge_loader(
     perm = np.random.permutation(len(edges))
     edges = edges[perm]
     labels = labels[perm]
+    #将Numpy数组转换为PyTorch张量，创建数据加载器
     dataset = TensorDataset(
         torch.as_tensor(edges[:, 0], dtype=torch.long),
         torch.as_tensor(edges[:, 1], dtype=torch.long),
@@ -54,12 +56,12 @@ def train(
     layers: int = 2,
     batch_size: int = 4096,
     lr: float = 1e-3,
-    weight_decay: float = 1e-5,
+    weight_decay: float = 1e-5,#权重衰退，用于减少过拟合
     valid_ratio: float = 0.1,
     seed: int = 0,
-    device: torch.device | None = None,
+    device: Optional[torch.device] = None
 ) -> TrainResult:
-    device = device or torch.device("cpu")
+    device = device or torch.device("cuda")
     train_pos, valid_pos = train_valid_split(dataset.train_edges, valid_ratio, seed)
     train_neg = sample_negative_edges(
         dataset.num_authors,
@@ -75,6 +77,7 @@ def train(
         len(valid_pos),
         seed=seed + 1,
     )
+    #数据加载器
     loader = make_edge_loader(train_pos, train_neg, batch_size)
 
     if model_name == "mf":

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 
@@ -12,7 +10,7 @@ from src.utils import get_device, save_checkpoint, set_seed
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a recommendation model and export a submission.")
     parser.add_argument("--data-dir", type=str, default="data_file")
-    parser.add_argument("--model", type=str, choices=["mf", "lightgcn"], default="lightgcn")
+    parser.add_argument("--model", type=str, choices=["lightgcn", "heterognn"], default="lightgcn")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--dim", type=int, default=64)
     parser.add_argument("--layers", type=int, default=2)
