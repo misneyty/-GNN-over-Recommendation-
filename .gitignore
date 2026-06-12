@@ -1,17 +1,3 @@
-# Local data and generated artifacts
-data/
-data_file/*
-!data_file/README.md
-outputs/*
-!outputs/checkpoints/
-!outputs/logs/
-!outputs/submissions/
-!outputs/figures/
-!outputs/checkpoints/.gitkeep
-!outputs/logs/.gitkeep
-!outputs/submissions/.gitkeep
-!outputs/figures/.gitkeep
-
 # Python
 __pycache__/
 *.py[cod]
@@ -21,8 +7,3 @@ __pycache__/
 .env
 .venv/
 venv/
-
-# Large model outputs
-*.pt
-*.pth
-*.ckpt

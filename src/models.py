@@ -1,6 +1,10 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+import numpy as np
+from typing import Optional
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 
 #lightGCN模型：更适合推荐系统的GCN
 class LightGCN(nn.Module):
@@ -184,3 +188,89 @@ class HeteroGNN(nn.Module):
         ).sum(dim=-1)
         bias = self.author_bias(author_ids).squeeze(-1) + self.paper_bias(paper_ids).squeeze(-1)
         return mlp_score + self.dot_scale * dot_score + self.feature_scale * feature_score + bias
+
+
+class HeteroGNNCalibrator:
+    def __init__(
+        self,
+        seed: int = 0,
+        learning_rate: float = 0.025,
+        max_iter: int = 600,
+        max_leaf_nodes: int = 63,
+        min_samples_leaf: int = 40,
+        l2_regularization: float = 4.0,
+        n_iter_no_change: int = 10,
+    ) -> None:
+        self.model = HistGradientBoostingClassifier(
+            learning_rate=learning_rate,
+            max_iter=max_iter,
+            max_leaf_nodes=max_leaf_nodes,
+            min_samples_leaf=min_samples_leaf,
+            l2_regularization=l2_regularization,
+            n_iter_no_change=n_iter_no_change,
+            random_state=seed,
+        )
+
+    @staticmethod
+    def _combine(
+        model_scores: np.ndarray,
+        structural_features: np.ndarray,
+    ) -> np.ndarray:
+        epsilon = 1e-6
+        model_scores = np.asarray(model_scores)
+        if model_scores.ndim == 1:
+            model_scores = model_scores[:, None]
+        clipped = np.clip(model_scores, epsilon, 1.0 - epsilon)
+        model_logits = np.log(clipped / (1.0 - clipped))
+        return np.column_stack([model_logits, structural_features])
+
+    def fit(
+        self,
+        model_scores: np.ndarray,
+        structural_features: np.ndarray,
+        labels: np.ndarray,
+    ) -> None:
+        features = self._combine(model_scores, structural_features)
+        self.model.fit(features, labels)
+
+    def predict_proba(
+        self,
+        model_scores: np.ndarray,
+        structural_features: np.ndarray,
+    ) -> np.ndarray:
+        features = self._combine(model_scores, structural_features)
+        return self.model.predict_proba(features)[:, 1]
+
+    def explain(
+        self,
+        model_scores: np.ndarray,
+        structural_features: np.ndarray,
+        labels: np.ndarray,
+        feature_names: list[str],
+        model_names: Optional[list[str]] = None,
+    ) -> list[tuple[str, float]]:
+        features = self._combine(model_scores, structural_features)
+        result = permutation_importance(
+            self.model,
+            features,
+            labels,
+            scoring="roc_auc",
+            n_repeats=3,
+            random_state=0,
+        )
+        score_count = 1 if model_scores.ndim == 1 else model_scores.shape[1]
+        if score_count == 1:
+            score_names = ["heterognn_logit"]
+        elif model_names is not None and len(model_names) == score_count:
+            score_names = [
+                f"{name}_logit"
+                for name in model_names
+            ]
+        else:
+            score_names = [
+                f"model_logit_{index}"
+                for index in range(score_count)
+            ]
+        names = score_names + feature_names
+        importance = zip(names, result.importances_mean)
+        return sorted(importance, key=lambda item: item[1], reverse=True)

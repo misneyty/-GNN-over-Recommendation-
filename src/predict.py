@@ -6,7 +6,7 @@ import torch
 
 from .graph import build_bipartite_adjacency
 from .utils import ensure_dir
-from typing import Dict, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 def score_edges(
     model_name: str,
@@ -16,6 +16,8 @@ def score_edges(
     adj: Optional[Union[torch.Tensor, Dict[str, torch.Tensor]]],
     device: Optional[torch.device],
     batch_size: int = 131072,
+    calibrator: Optional[Any] = None,
+    structural_features: Optional[Any] = None,
 ) -> np.ndarray:
     device = device or torch.device("cpu")
     model.eval()
@@ -43,7 +45,13 @@ def score_edges(
             else:
                 raise ValueError(f"Unsupported model: {model_name}")
             scores.append(torch.sigmoid(logits).detach().cpu().numpy())
-    return np.concatenate(scores)
+    model_scores = np.concatenate(scores)
+    if calibrator is None:
+        return model_scores
+    if structural_features is None:
+        raise ValueError("Calibrated prediction requires structural features")
+    pair_features = structural_features.transform(edges, device=device)
+    return calibrator.predict_proba(model_scores, pair_features)
 
 
 def write_submission(

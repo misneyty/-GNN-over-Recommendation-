@@ -7,12 +7,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from .data import Dataset
-from .evaluate import search_best_threshold
+from .evaluate import classification_metrics, search_best_threshold
 from .graph import build_bipartite_adjacency, build_relation_adjacencies
-from .models import HeteroGNN, LightGCN
+from .models import HeteroGNN, HeteroGNNCalibrator, LightGCN
 from .negative_sampling import sample_negative_edges
 from .predict import score_edges
 from .split import train_valid_split
+from .structural_features import StructuralFeatureStore
 
 
 def build_author_features(
@@ -35,11 +36,15 @@ class TrainResult:
         adj: Optional[Union[torch.Tensor, Dict[str, torch.Tensor]]],
         best_threshold: float,
         valid_metrics: dict[str, float],
+        calibrator: Optional[HeteroGNNCalibrator] = None,
+        structural_features: Optional[StructuralFeatureStore] = None,
     ):
         self.model = model
         self.adj = adj
         self.best_threshold = best_threshold
         self.valid_metrics = valid_metrics
+        self.calibrator = calibrator
+        self.structural_features = structural_features
 
 
 def make_edge_loader(
@@ -63,6 +68,33 @@ def make_edge_loader(
         torch.as_tensor(labels, dtype=torch.float32),
     )
     return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+
+def split_calibration_indices(
+    num_positive: int,
+    num_negative: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed + 2026)
+    positive = rng.permutation(num_positive)
+    negative = rng.permutation(num_negative) + num_positive
+    positive_fit = int(num_positive * 0.4)
+    positive_tune = int(num_positive * 0.7)
+    negative_fit = int(num_negative * 0.4)
+    negative_tune = int(num_negative * 0.7)
+    fit_indices = np.concatenate(
+        [positive[:positive_fit], negative[:negative_fit]]
+    )
+    tune_indices = np.concatenate(
+        [
+            positive[positive_fit:positive_tune],
+            negative[negative_fit:negative_tune],
+        ]
+    )
+    evaluation_indices = np.concatenate(
+        [positive[positive_tune:], negative[negative_tune:]]
+    )
+    return fit_indices, tune_indices, evaluation_indices
 
 
 def train(
@@ -172,5 +204,67 @@ def train(
         ]
     )
     y_score = score_edges(model_name, model, valid_edges, dataset.num_authors, adj, device)
-    best_threshold, valid_metrics = search_best_threshold(y_true, y_score)
-    return TrainResult(model=model, adj=adj, best_threshold=best_threshold, valid_metrics=valid_metrics)
+    calibrator = None
+    structural_features = None
+    if model_name == "heterognn":
+        structural_features = StructuralFeatureStore(
+            dataset.num_authors,
+            dataset.num_papers,
+            train_pos,
+            dataset.coauthor_edges,
+            dataset.citation_edges,
+            dataset.paper_features,
+        )
+        pair_features = structural_features.transform(valid_edges, device=device)
+
+        calibration_indices, threshold_indices, evaluation_indices = (
+            split_calibration_indices(
+                len(valid_pos),
+                len(valid_neg),
+                seed,
+            )
+        )
+
+        selection_calibrator = HeteroGNNCalibrator(seed=seed)
+        selection_calibrator.fit(
+            y_score[calibration_indices],
+            pair_features[calibration_indices],
+            y_true[calibration_indices],
+        )
+        threshold_scores = selection_calibrator.predict_proba(
+            y_score[threshold_indices],
+            pair_features[threshold_indices],
+        )
+        best_threshold, _ = search_best_threshold(
+            y_true[threshold_indices],
+            threshold_scores,
+        )
+        final_fit_indices = np.concatenate(
+            [calibration_indices, threshold_indices]
+        )
+        calibrator = HeteroGNNCalibrator(seed=seed)
+        calibrator.fit(
+            y_score[final_fit_indices],
+            pair_features[final_fit_indices],
+            y_true[final_fit_indices],
+        )
+        evaluation_scores = calibrator.predict_proba(
+            y_score[evaluation_indices],
+            pair_features[evaluation_indices],
+        )
+        valid_metrics = classification_metrics(
+            y_true[evaluation_indices],
+            evaluation_scores,
+            best_threshold,
+        )
+    else:
+        best_threshold, valid_metrics = search_best_threshold(y_true, y_score)
+
+    return TrainResult(
+        model=model,
+        adj=adj,
+        best_threshold=best_threshold,
+        valid_metrics=valid_metrics,
+        calibrator=calibrator,
+        structural_features=structural_features,
+    )
