@@ -1,3 +1,5 @@
+"""可复现的 HeteroGNN 快照训练、校准、评估与预测完整流程。"""
+
 from __future__ import annotations
 
 import copy
@@ -29,6 +31,8 @@ from .utils import configure_reproducibility, save_checkpoint
 
 @dataclass
 class FullPipelineResult:
+    """完整端到端流程产生的关键结果与输出路径。"""
+
     best_threshold: float
     tune_metrics: dict[str, float]
     valid_metrics: dict[str, float]
@@ -43,6 +47,11 @@ def _make_reproducible_loader(
     batch_size: int,
     seed: int,
 ) -> DataLoader:
+    """为一个训练轮次构造可复现、正负平衡的数据加载器。
+
+    NumPy 负责第一次固定排列，PyTorch ``Generator`` 控制 DataLoader
+    的 shuffle。两者都使用由 epoch 推导出的固定种子。
+    """
     edges = np.vstack([positive_edges, negative_edges])
     labels = np.concatenate(
         [
@@ -50,6 +59,7 @@ def _make_reproducible_loader(
             np.zeros(len(negative_edges), dtype=np.float32),
         ]
     )
+    # 先固定一次全局排列，使边和标签在进入 TensorDataset 前保持对应。
     rng = np.random.default_rng(seed)
     permutation = rng.permutation(len(edges))
     dataset = TensorDataset(
@@ -69,9 +79,13 @@ def _make_reproducible_loader(
 
 
 def _cpu_state_dict(model: torch.nn.Module) -> Dict[str, torch.Tensor]:
+    """复制一份位于 CPU 的模型参数，避免后续训练修改快照。
+
+    ``clone`` 非常重要：如果只保存对原张量的引用，继续训练会导致
+    之前的快照也被同步覆盖。
+    """
     return {
-        name: value.detach().cpu().clone()
-        for name, value in model.state_dict().items()
+        name: value.detach().cpu().clone() for name, value in model.state_dict().items()
     }
 
 
@@ -82,10 +96,13 @@ def _build_model(
     layers: int,
     device: torch.device,
 ) -> HeteroGNN:
+    """构造 HeteroGNN 的节点输入，并把模型移动到指定设备。"""
+    # 论文节点直接使用原始 512 维内容特征。
     paper_features = torch.as_tensor(
         dataset.paper_features,
         dtype=torch.float32,
     )
+    # 作者节点使用训练图中历史论文特征的平均值。
     author_features = torch.as_tensor(
         build_author_features(
             dataset.num_authors,
@@ -117,6 +134,11 @@ def _train_snapshots(
     seed: int,
     device: torch.device,
 ) -> tuple[HeteroGNN, Dict[str, Dict[str, torch.Tensor]]]:
+    """连续训练一次，并在指定 epoch 保存内存快照。
+
+    这种方式避免从头独立训练三个模型，同时让 60、80、100 轮模型
+    提供略有差异的判断，供后续校准器进行快照集成。
+    """
     model = _build_model(dataset, train_edges, dim, layers, device)
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -132,6 +154,7 @@ def _train_snapshots(
         range(1, last_epoch + 1),
         desc="train-full-heterognn",
     ):
+        # 每个 epoch 使用不同但可复现的随机种子重新生成负样本。
         negative_edges = sample_negative_edges(
             dataset.num_authors,
             dataset.num_papers,
@@ -154,6 +177,7 @@ def _train_snapshots(
             paper_ids = paper_ids.to(device)
             labels = labels.to(device)
             optimizer.zero_grad()
+            # 全图消息传播得到节点嵌入，再抽取当前 batch 的 pair 计算损失。
             author_embeddings, paper_embeddings = model.encode(adjacency)
             logits = model.score(
                 author_embeddings,
@@ -168,6 +192,7 @@ def _train_snapshots(
             sample_count += len(labels)
 
         if epoch in requested_epochs:
+            # 快照只保存在内存，完整训练结束后统一写入 checkpoint。
             name = f"epoch_{epoch}"
             snapshots[name] = _cpu_state_dict(model)
             print(
@@ -186,8 +211,13 @@ def _score_snapshots(
     adjacency: dict[str, torch.Tensor],
     device: torch.device,
 ) -> np.ndarray:
+    """依次加载每个快照，对同一批边分别计算模型概率。
+
+    返回矩阵形状为 ``[pair 数, 快照数]``，每一列对应一个 epoch。
+    """
     columns = []
     for state in snapshots.values():
+        # 模型结构不变，只替换当前快照的参数。
         model.load_state_dict(state)
         columns.append(
             score_edges(
@@ -203,6 +233,7 @@ def _score_snapshots(
 
 
 def _environment_metadata() -> dict[str, str]:
+    """记录复现实验所需的软件版本和 GPU 信息。"""
     return {
         "python": platform.python_version(),
         "pytorch": torch.__version__,
@@ -211,11 +242,7 @@ def _environment_metadata() -> dict[str, str]:
         "pandas": pd.__version__,
         "scipy": scipy.__version__,
         "scikit_learn": sklearn.__version__,
-        "gpu": (
-            torch.cuda.get_device_name(0)
-            if torch.cuda.is_available()
-            else "cpu"
-        ),
+        "gpu": (torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"),
     }
 
 
@@ -234,6 +261,11 @@ def run_full_pipeline(
     seed: int = 0,
     device: torch.device | None = None,
 ) -> FullPipelineResult:
+    """执行训练、校准、独立评估、测试预测和结果保存。
+
+    这是老师从零运行项目时使用的最终入口。所有验证结构特征都只基于
+    训练子图构建，测试集仅在模型和阈值确定后参与预测。
+    """
     if not snapshot_epochs:
         raise ValueError("snapshot_epochs must not be empty")
     snapshot_epochs = tuple(sorted(set(int(x) for x in snapshot_epochs)))
@@ -241,9 +273,8 @@ def run_full_pipeline(
         raise ValueError("snapshot epochs must be positive")
 
     configure_reproducibility(seed)
-    device = device or torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # 阶段 1：固定划分训练正边和验证正边，并生成等量验证负边。
     train_edges, valid_positive = train_valid_split(
         dataset.train_edges,
         valid_ratio,
@@ -264,6 +295,7 @@ def run_full_pipeline(
         ]
     )
 
+    # 阶段 2：只使用训练正边建立异构图，避免验证边信息泄漏。
     adjacency = build_relation_adjacencies(
         dataset.num_authors,
         dataset.num_papers,
@@ -271,10 +303,9 @@ def run_full_pipeline(
         dataset.coauthor_edges,
         dataset.citation_edges,
     )
-    adjacency = {
-        name: value.to(device)
-        for name, value in adjacency.items()
-    }
+    adjacency = {name: value.to(device) for name, value in adjacency.items()}
+
+    # 阶段 3：从随机初始化训练一个模型，并保存 60/80/100 轮快照。
     model, snapshots = _train_snapshots(
         dataset,
         train_edges,
@@ -289,6 +320,7 @@ def run_full_pipeline(
         device,
     )
 
+    # 阶段 4：三个快照分别为验证 pair 打分，同时构造 89 个结构特征。
     valid_model_scores = _score_snapshots(
         model,
         snapshots,
@@ -309,14 +341,13 @@ def run_full_pipeline(
         valid_edges,
         device=device,
     )
-    fit_indices, tune_indices, evaluation_indices = (
-        split_calibration_indices(
-            len(valid_positive),
-            len(valid_negative),
-            seed,
-        )
+    fit_indices, tune_indices, evaluation_indices = split_calibration_indices(
+        len(valid_positive),
+        len(valid_negative),
+        seed,
     )
 
+    # 阶段 5：40% 样本拟合初始校准器，30% 样本搜索最佳 F1 阈值。
     selection_calibrator = HeteroGNNCalibrator(seed=seed)
     selection_calibrator.fit(
         valid_model_scores[fit_indices],
@@ -332,6 +363,7 @@ def run_full_pipeline(
         tune_scores,
     )
 
+    # 阈值确定后，合并前 70% 样本重新训练最终校准器。
     final_fit_indices = np.concatenate([fit_indices, tune_indices])
     final_calibrator = HeteroGNNCalibrator(seed=seed)
     final_calibrator.fit(
@@ -348,6 +380,7 @@ def run_full_pipeline(
         evaluation_scores,
         best_threshold,
     )
+    # 置换重要性用于解释快照分数和结构特征各自的贡献。
     snapshot_names = list(snapshots)
     importance = selection_calibrator.explain(
         valid_model_scores[tune_indices],
@@ -357,6 +390,7 @@ def run_full_pipeline(
         model_names=snapshot_names,
     )
 
+    # 阶段 6：模型、校准器和阈值确定后，再为全部测试候选 pair 打分。
     test_model_scores = _score_snapshots(
         model,
         snapshots,
@@ -379,6 +413,7 @@ def run_full_pipeline(
         best_threshold,
     )
 
+    # 阶段 7：保存模型快照、校准器、指标、特征名和环境信息。
     training_config = {
         "data_dir": data_dir,
         "snapshot_epochs": list(snapshot_epochs),
@@ -393,6 +428,7 @@ def run_full_pipeline(
         "batch_randomization": "epoch_seeded_numpy_and_pytorch_generator",
     }
     final_state = snapshots[snapshot_names[-1]]
+    # model_state 保存最后一轮参数；ensemble_model_states 保存全部快照。
     save_checkpoint(
         checkpoint_path,
         model_name="heterognn_snapshot_ensemble",
