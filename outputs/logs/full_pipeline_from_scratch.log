@@ -1,0 +1,40 @@
+Full pipeline verification run
+Date: 2026-06-12
+
+Command:
+conda run -n GNN python -B main.py --full-pipeline --data-dir data_file --device cuda --batch-size 65536 --snapshot-epochs 60,80,100 --seed 0
+
+Environment:
+Python: 3.9.24
+PyTorch: 2.5.1+cu121
+CUDA runtime: 12.1
+scikit-learn: 1.6.1
+GPU: NVIDIA GeForce RTX 4060 Laptop GPU
+
+Training:
+Snapshot epoch 60 loss: 0.127004
+Snapshot epoch 80 loss: 0.103675
+Snapshot epoch 100 loss: 0.089991
+
+Metrics:
+Tune F1: 0.9624786533300805
+Tune accuracy: 0.9624383334147414
+Tune AUC: 0.9937154970532792
+Independent validation F1: 0.9635335413416537
+Independent validation accuracy: 0.9634640746348849
+Independent validation AUC: 0.9941528124353735
+Best threshold: 0.4370000000000004
+
+Outputs:
+Checkpoint: outputs/checkpoints/heterognn_from_scratch_full.pt
+Checkpoint SHA256: 6C1CA4AAA1BCE90364DA6F2F964CCC213636030D535EF8B18B3FB0F90D36A4B6
+Submission: outputs/submissions/Submission_heterognn_from_scratch_full.csv
+Submission SHA256: 8AB5CBE3C51D9916AC18A75D4FC192D63A2ADD2996463DAFB5AC89793B761F86
+Submission rows: 2047262
+Predicted positives: 1027149
+Predicted negatives: 1020113
+
+Result:
+The complete workflow finished successfully from random initialization.
+The second-run F1 differs from the first-run F1 by +0.000458, while both
+runs reproduce the expected approximately 0.963 validation performance.

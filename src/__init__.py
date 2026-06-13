@@ -1,1 +1,1 @@
-"""Project source package for academic paper recommendation."""
+"""学术论文推荐系统的核心源代码包。"""
